@@ -1,4 +1,4 @@
-name: Backup Forked Repos to Google Drive
+name: Backup All Repos to Google Drive
 
 on:
   schedule:
@@ -13,32 +13,46 @@ jobs:
         run: curl https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone
+        env:
+          RCLONE_TOKEN: ${{ secrets.RCLONE_CONFIG_GDRIVE_TOKEN }}
         run: |
           mkdir -p ~/.config/rclone
-          cat > ~/.config/rclone/rclone.conf << EOF
+          cat > ~/.config/rclone/rclone.conf << RCLONE
           [gdrive]
           type = drive
           scope = drive
-          token = ${{ secrets.RCLONE_CONFIG_GDRIVE_TOKEN }}
-          EOF
+          token = ${RCLONE_TOKEN}
+          RCLONE
+          echo "rclone config written"
+          rclone listremotes
 
-      - name: Clone and upload forked repos
+      - name: Clone and upload all repos
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           GITHUB_USERNAME: ${{ github.repository_owner }}
           FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          # Get all forked repos
-          FORKS=$(curl -s -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/users/$GITHUB_USERNAME/repos?type=all&per_page=100" \
-            | jq -r '.[].full_name')
+          PAGE=1
+          REPOS=""
+          while true; do
+            BATCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/user/repos?type=all&per_page=100&page=$PAGE" \
+              | jq -r '.[].full_name')
+            [ -z "$BATCH" ] && break
+            REPOS="$REPOS $BATCH"
+            PAGE=$((PAGE + 1))
+          done
+
+          echo "Found repos: $REPOS"
 
           for REPO in $REPOS; do
             NAME=$(echo $REPO | tr '/' '_')
-            echo "Cloning $REPO..."
+            echo "⬇ Cloning $REPO..."
             git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
             zip -r "$NAME.zip" "$NAME"
-            rclone copy "$NAME.zip" "gdrive:/$FOLDER_ID" --drive-root-folder-id "$FOLDER_ID"
+            rclone copy "$NAME.zip" "gdrive:/" --drive-root-folder-id "$FOLDER_ID" --progress
             rm -rf "$NAME" "$NAME.zip"
-            echo "✓ $REPO done"
+            echo "✓ $REPO uploaded"
           done
+
+          echo "All done!"
