@@ -1,0 +1,44 @@
+name: Backup Forked Repos to Google Drive
+
+on:
+  schedule:
+    - cron: "0 0 * * 0"  # Every Sunday midnight
+  workflow_dispatch:      # Manual trigger too
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf << EOF
+          [gdrive]
+          type = drive
+          scope = drive
+          token = ${{ secrets.RCLONE_CONFIG_GDRIVE_TOKEN }}
+          EOF
+
+      - name: Clone and upload forked repos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_USERNAME: ${{ github.repository_owner }}
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          # Get all forked repos
+          FORKS=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/users/$GITHUB_USERNAME/repos?type=all&per_page=100" \
+            | jq -r '.[].full_name')
+
+          for REPO in $REPOS; do
+            NAME=$(echo $REPO | tr '/' '_')
+            echo "Cloning $REPO..."
+            git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
+            zip -r "$NAME.zip" "$NAME"
+            rclone copy "$NAME.zip" "gdrive:/$FOLDER_ID" --drive-root-folder-id "$FOLDER_ID"
+            rm -rf "$NAME" "$NAME.zip"
+            echo "✓ $REPO done"
+          done
