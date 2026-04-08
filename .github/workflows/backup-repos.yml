@@ -48,7 +48,7 @@ jobs:
           for REPO in $REPOS; do
             NAME=$(echo $REPO | tr '/' '_')
             echo "⬇ Cloning $REPO..."
-            git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
+           GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
             zip -r "$NAME.zip" "$NAME"
             rclone copy "$NAME.zip" "gdrive:/" --drive-root-folder-id "$FOLDER_ID" --progress
             rm -rf "$NAME" "$NAME.zip"
