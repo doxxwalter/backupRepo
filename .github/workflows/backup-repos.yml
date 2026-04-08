@@ -15,12 +15,14 @@ jobs:
       - name: Configure rclone
         env:
           RCLONE_TOKEN: ${{ secrets.RCLONE_CONFIG_GDRIVE_TOKEN }}
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
           cat > ~/.config/rclone/rclone.conf << RCLONE
           [gdrive]
           type = drive
           scope = drive
+          root_folder_id = ${FOLDER_ID}
           token = ${RCLONE_TOKEN}
           RCLONE
           echo "rclone config written"
@@ -32,6 +34,12 @@ jobs:
           GITHUB_USERNAME: ${{ github.repository_owner }}
           FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
+          # Fetch list of already uploaded zips from Drive
+          echo "Fetching already uploaded files from Drive..."
+          UPLOADED=$(rclone lsf "gdrive:/" --drive-root-folder-id "$FOLDER_ID" 2>/dev/null || echo "")
+          echo "Already uploaded: $UPLOADED"
+
+          # Fetch all repos (handles pagination)
           PAGE=1
           REPOS=""
           while true; do
@@ -47,11 +55,24 @@ jobs:
 
           for REPO in $REPOS; do
             NAME=$(echo $REPO | tr '/' '_')
+            ZIPNAME="$NAME.zip"
+
+            # Skip if already uploaded
+            if echo "$UPLOADED" | grep -qx "$ZIPNAME"; then
+              echo "⏭ Skipping $REPO (already uploaded)"
+              continue
+            fi
+
             echo "⬇ Cloning $REPO..."
-           GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
-            zip -r "$NAME.zip" "$NAME"
-            rclone copy "$NAME.zip" "gdrive:/" --drive-root-folder-id "$FOLDER_ID" --progress
-            rm -rf "$NAME" "$NAME.zip"
+            GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
+
+            zip -r "$ZIPNAME" "$NAME"
+            rclone copy "$ZIPNAME" "gdrive:/" \
+              --drive-root-folder-id "$FOLDER_ID" \
+              --drive-upload-cutoff 1000G \
+              --drive-chunk-size 256M \
+              --progress
+            rm -rf "$NAME" "$ZIPNAME"
             echo "✓ $REPO uploaded"
           done
 
