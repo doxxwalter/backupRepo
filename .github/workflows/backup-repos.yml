@@ -64,7 +64,10 @@ jobs:
             fi
 
             echo "⬇ Cloning $REPO..."
-            GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"
+            if ! GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$NAME"; then
+              echo "⚠ Skipping $REPO (clone failed — disabled, private, or inaccessible)"
+              continue
+            fi
 
             zip -r "$ZIPNAME" "$NAME"
             rclone copy "$ZIPNAME" "gdrive:/" \
