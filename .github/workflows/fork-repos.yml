@@ -1,0 +1,61 @@
+name: Fork Repos to My Account
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  fork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Fork all repos from config
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Read users from [fork] section in backup.config
+          USERS=$(awk '/^\[fork\]/{f=1;next} /^\[/{f=0} f && /^[^#]/{print $1}' backup.config)
+
+          if [ -z "$USERS" ]; then
+            echo "No users found under [fork] in backup.config"
+            exit 0
+          fi
+
+          for USER in $USERS; do
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Fetching repos for: $USER"
+            PAGE=1
+            while true; do
+              REPOS=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/users/$USER/repos?type=public&per_page=100&page=$PAGE" \
+                | jq -r '.[].full_name')
+              [ -z "$REPOS" ] && break
+
+              for REPO in $REPOS; do
+                echo "⑂ Forking $REPO..."
+                RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+                  -X POST \
+                  -H "Authorization: token $GH_TOKEN" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/$REPO/forks" \
+                  -d '{"default_branch_only": true}')
+
+                if [ "$RESPONSE" = "202" ]; then
+                  echo "✓ Forked $REPO"
+                elif [ "$RESPONSE" = "403" ]; then
+                  echo "⚠ Skipping $REPO (forbidden — private or restricted)"
+                else
+                  echo "⚠ Skipping $REPO (HTTP $RESPONSE)"
+                fi
+
+                # Small delay to avoid hitting API rate limits
+                sleep 1
+              done
+
+              PAGE=$((PAGE + 1))
+            done
+          done
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "All done!"
