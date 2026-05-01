@@ -9,6 +9,9 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
 
@@ -37,11 +40,11 @@ jobs:
           # Fetch list of already uploaded zips from Drive
           echo "Fetching already uploaded files from Drive..."
           UPLOADED=$(rclone lsf "gdrive:/" --drive-root-folder-id "$FOLDER_ID" 2>/dev/null || echo "")
-          echo "Already uploaded: $UPLOADED"
 
-          # Fetch all repos (handles pagination)
-          PAGE=1
           REPOS=""
+
+          # Your own repos
+          PAGE=1
           while true; do
             BATCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/user/repos?type=all&per_page=100&page=$PAGE" \
@@ -49,6 +52,36 @@ jobs:
             [ -z "$BATCH" ] && break
             REPOS="$REPOS $BATCH"
             PAGE=$((PAGE + 1))
+          done
+
+          # Orgs from backup.config
+          ORGS=$(awk '/^\[orgs\]/{f=1;next} /^\[/{f=0} f && /^[^#]/{print $1}' backup.config)
+          for ORG in $ORGS; do
+            echo "Fetching repos for org: $ORG"
+            PAGE=1
+            while true; do
+              BATCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/orgs/$ORG/repos?type=all&per_page=100&page=$PAGE" \
+                | jq -r '.[].full_name')
+              [ -z "$BATCH" ] && break
+              REPOS="$REPOS $BATCH"
+              PAGE=$((PAGE + 1))
+            done
+          done
+
+          # Users from backup.config
+          USERS=$(awk '/^\[users\]/{f=1;next} /^\[/{f=0} f && /^[^#]/{print $1}' backup.config)
+          for USER in $USERS; do
+            echo "Fetching repos for user: $USER"
+            PAGE=1
+            while true; do
+              BATCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/users/$USER/repos?type=public&per_page=100&page=$PAGE" \
+                | jq -r '.[].full_name')
+              [ -z "$BATCH" ] && break
+              REPOS="$REPOS $BATCH"
+              PAGE=$((PAGE + 1))
+            done
           done
 
           echo "Found repos: $REPOS"
