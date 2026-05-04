@@ -1,0 +1,63 @@
+name: Sync Forks with Upstream
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # Every day at midnight
+  workflow_dispatch:      # Manual trigger too
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync all forks
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_USERNAME: ${{ github.repository_owner }}
+        run: |
+          echo "Fetching all forked repos..."
+          PAGE=1
+          FORKS=""
+          while true; do
+            BATCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/user/repos?type=forks&per_page=100&page=$PAGE" \
+              | jq -r '.[].full_name')
+            [ -z "$BATCH" ] && break
+            FORKS="$FORKS $BATCH"
+            PAGE=$((PAGE + 1))
+          done
+
+          echo "Found forks: $FORKS"
+
+          for FORK in $FORKS; do
+            REPO_NAME=$(echo $FORK | cut -d'/' -f2)
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "⟳ Syncing $FORK..."
+
+            RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/sync_response.json \
+              -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$FORK/merge-upstream" \
+              -d '{"branch":"'"$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/$FORK" | jq -r '.default_branch')"'"}')
+
+            MESSAGE=$(jq -r '.message // .merge_type // "unknown"' /tmp/sync_response.json)
+
+            if [ "$RESPONSE" = "200" ]; then
+              echo "✓ $FORK synced ($MESSAGE)"
+            elif [ "$RESPONSE" = "409" ]; then
+              echo "⚠ $FORK has conflicts — skipping (manual fix needed)"
+            elif [ "$RESPONSE" = "422" ]; then
+              echo "⏭ $FORK already up to date"
+            else
+              echo "⚠ $FORK failed (HTTP $RESPONSE — $MESSAGE)"
+            fi
+          done
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "All done!"
+
+  backup:
+    needs: sync
+    uses: ./.github/workflows/backup-repos.yml
+    secrets: inherit

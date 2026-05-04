@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "0 0 * * 0"  # Every Sunday midnight
   workflow_dispatch:      # Manual trigger too
+  workflow_call:          # Called by sync-forks.yml
 
 jobs:
   backup:
@@ -37,9 +38,14 @@ jobs:
           GITHUB_USERNAME: ${{ github.repository_owner }}
           FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          # Fetch list of already uploaded zips from Drive
-          echo "Fetching already uploaded files from Drive..."
-          UPLOADED=$(rclone lsf "gdrive:/" --drive-root-folder-id "$FOLDER_ID" 2>/dev/null || echo "")
+          # Date folder for this run
+          DATE=$(date +%Y-%m-%d)
+          DRIVE_PATH="gdrive:/$DATE"
+          echo "Uploading to Drive folder: $DATE"
+
+          # Fetch already uploaded zips in today's folder (resume support)
+          UPLOADED=$(rclone lsf "$DRIVE_PATH" --drive-root-folder-id "$FOLDER_ID" 2>/dev/null || echo "")
+          echo "Already uploaded today: $UPLOADED"
 
           REPOS=""
 
@@ -90,9 +96,9 @@ jobs:
             NAME=$(echo $REPO | tr '/' '_')
             ZIPNAME="$NAME.zip"
 
-            # Skip if already uploaded
+            # Skip if already uploaded today (resume support)
             if echo "$UPLOADED" | grep -qx "$ZIPNAME"; then
-              echo "⏭ Skipping $REPO (already uploaded)"
+              echo "⏭ Skipping $REPO (already uploaded today)"
               continue
             fi
 
@@ -103,13 +109,13 @@ jobs:
             fi
 
             zip -r "$ZIPNAME" "$NAME"
-            rclone copy "$ZIPNAME" "gdrive:/" \
+            rclone copy "$ZIPNAME" "$DRIVE_PATH" \
               --drive-root-folder-id "$FOLDER_ID" \
               --drive-upload-cutoff 1000G \
               --drive-chunk-size 256M \
               --progress
             rm -rf "$NAME" "$ZIPNAME"
-            echo "✓ $REPO uploaded"
+            echo "✓ $REPO uploaded to $DATE/"
           done
 
           echo "All done!"
